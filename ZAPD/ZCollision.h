@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ZCamData.h"
 #include "ZCollisionPoly.h"
 #include "ZFile.h"
 #include "ZResource.h"
@@ -24,17 +25,6 @@ public:
 	int32_t cameraPosDataSeg;
 };
 
-class CameraDataList
-{
-public:
-	std::vector<CameraDataEntry*> entries;
-	std::vector<CameraPositionData*> cameraPositionData;
-
-	CameraDataList(ZFile* parent, const std::string& prefix, const std::vector<uint8_t>& rawData,
-	               offset_t rawDataIndex, offset_t upperCameraBoundary);
-	~CameraDataList();
-};
-
 class ZCollisionHeader : public ZResource
 {
 public:
@@ -46,6 +36,7 @@ public:
 	segptr_t polyAddress;
 	segptr_t polyTypeDefAddress;
 	segptr_t camDataAddress;
+	offset_t upperCameraBoundary;
 
 	int32_t numWaterBoxes;
 	segptr_t waterBoxAddress;
@@ -57,7 +48,7 @@ public:
 	std::vector<ZCollisionPoly> polygons;
 	std::vector<ZSurfaceType> polygonTypes;
 	std::vector<ZWaterbox> waterBoxes;
-	CameraDataList* camData = nullptr;
+	ZCamData* camData = nullptr;
 
 	ZCollisionHeader(ZFile* nParent);
 	~ZCollisionHeader();

@@ -55,6 +55,7 @@ enum class ZResourceType
 	Vector,
 	Vertex,
 	Waterbox,
+	CamData,
 };
 
 class ResourceAttribute

@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <string>
 
+#include "WarningHandler.h"
+
 #include "Globals.h"
 #include "Utils/BitConverter.h"
 #include "Utils/StringHelper.h"
@@ -105,7 +107,7 @@ void ZCollisionHeader::ParseRawData()
 		// - Vertices
 		// - WaterBoxes
 		// - CollisionHeader
-		offset_t upperCameraBoundary = polyTypeDefSegmentOffset;
+		upperCameraBoundary = polyTypeDefSegmentOffset;
 		if (upperCameraBoundary == 0)
 		{
 			upperCameraBoundary = polySegmentOffset;
@@ -123,8 +125,30 @@ void ZCollisionHeader::ParseRawData()
 			upperCameraBoundary = rawDataIndex;
 		}
 
-		camData =
-			new CameraDataList(parent, name, rawData, camDataSegmentOffset, upperCameraBoundary);
+		if (upperCameraBoundary > camDataSegmentOffset)  // Hack for sharp ocarina
+		{
+			size_t numElements = (upperCameraBoundary - camDataSegmentOffset) / 8;
+
+			camData = new ZCamData(parent, this, numElements);
+			camData->SetRawDataIndex(camDataSegmentOffset);
+			camData->ParseRawData();
+			camData->DeclareReferences("placeholder");  // Can be anything but not empty
+		}
+		else
+		{
+			std::string placeHolder;
+			if (!Globals::Instance->GetSegmentedPtrName(camDataSegmentOffset, parent, "CamData",
+			                                            placeHolder))
+			{
+				HANDLE_WARNING_RESOURCE(
+					WarningType::Always, parent, this, camDataSegmentOffset,
+					"Invalid offset for CamData",
+					StringHelper::Sprintf(
+						"CamData is in a strange place. Is this a modded map? Try "
+						"creating a node for it. It is at offset %06X.",
+						camDataSegmentOffset));
+			}
+		}
 	}
 
 	for (int32_t i = 0; i < numWaterBoxes; i++) {
@@ -193,6 +217,20 @@ void ZCollisionHeader::DeclareReferences(const std::string& prefix)
 		                            polygonTypes.size(), declaration);
 
 	declaration.clear();
+
+	if (camData != nullptr)
+	{
+		declaration += StringHelper::Sprintf("\t%s", camData->GetBodySourceCode().c_str());
+
+		if ((camDataAddress != SEGMENTED_NULL) && (upperCameraBoundary > camDataSegmentOffset))
+		{
+			parent->AddDeclarationArray(camDataSegmentOffset, DeclarationAlignment::Align4,
+			                            camData->GetRawDataSize(), camData->GetSourceTypeName(),
+			                            StringHelper::Sprintf("%sCamData", auxName.c_str()),
+			                            camData->count, declaration);
+		}
+		declaration.clear();
+	}
 
 	if (vertices.size() > 0)
 	{
@@ -278,105 +316,4 @@ ZResourceType ZCollisionHeader::GetResourceType() const
 size_t ZCollisionHeader::GetRawDataSize() const
 {
 	return 44;
-}
-
-CameraDataList::CameraDataList(ZFile* parent, const std::string& prefix,
-                               const std::vector<uint8_t>& rawData, offset_t rawDataIndex,
-                               offset_t upperCameraBoundary)
-{
-	std::string declaration;
-
-	// Parse CameraDataEntries
-	size_t numElements = (upperCameraBoundary - rawDataIndex) / 8;
-	assert(numElements < 10000);
-
-	offset_t cameraPosDataSeg = rawDataIndex;
-	for (size_t i = 0; i < numElements; i++)
-	{
-		CameraDataEntry* entry = new CameraDataEntry();
-
-		entry->cameraSType =
-			BitConverter::ToInt16BE(rawData, rawDataIndex + (entries.size() * 8) + 0);
-		entry->numData = BitConverter::ToInt16BE(rawData, rawDataIndex + (entries.size() * 8) + 2);
-		entry->cameraPosDataSeg =
-			BitConverter::ToInt32BE(rawData, rawDataIndex + (entries.size() * 8) + 4);
-
-		if (entry->cameraPosDataSeg != 0 && GETSEGNUM(entry->cameraPosDataSeg) != SEGMENT_SCENE)
-		{
-			cameraPosDataSeg = rawDataIndex + (entries.size() * 8);
-			break;
-		}
-
-		if (entry->cameraPosDataSeg != 0 && cameraPosDataSeg > (entry->cameraPosDataSeg & 0xFFFFFF))
-			cameraPosDataSeg = (entry->cameraPosDataSeg & 0xFFFFFF);
-
-		entries.push_back(entry);
-	}
-
-	// Setting cameraPosDataAddr to rawDataIndex give a pos list length of 0
-	uint32_t cameraPosDataOffset = cameraPosDataSeg & 0xFFFFFF;
-	for (size_t i = 0; i < entries.size(); i++)
-	{
-		char camSegLine[2048];
-
-		if (entries[i]->cameraPosDataSeg != 0)
-		{
-			int32_t index =
-				((entries[i]->cameraPosDataSeg & 0x00FFFFFF) - cameraPosDataOffset) / 0x6;
-			sprintf(camSegLine, "&%sCamPosData[%i]", prefix.c_str(), index);
-		}
-		else
-			sprintf(camSegLine, "NULL");
-
-		declaration +=
-			StringHelper::Sprintf("    { 0x%04X, %i, %s },", entries[i]->cameraSType,
-		                          entries[i]->numData, camSegLine, rawDataIndex + (i * 8));
-
-		if (i < entries.size() - 1)
-			declaration += "\n";
-	}
-
-	parent->AddDeclarationArray(
-		rawDataIndex, DeclarationAlignment::Align4, entries.size() * 8, "CamData",
-		StringHelper::Sprintf("%sCamDataList", prefix.c_str(), rawDataIndex), entries.size(),
-		declaration);
-
-	uint32_t numDataTotal = (rawDataIndex - cameraPosDataOffset) / 0x6;
-
-	if (numDataTotal > 0)
-	{
-		declaration.clear();
-		for (uint32_t i = 0; i < numDataTotal; i++)
-		{
-			CameraPositionData* data =
-				new CameraPositionData(rawData, cameraPosDataOffset + (i * 6));
-			cameraPositionData.push_back(data);
-
-			declaration += StringHelper::Sprintf("\t{ %6i, %6i, %6i },", data->x, data->y, data->z);
-			if (i + 1 < numDataTotal)
-				declaration += "\n";
-		}
-
-		int32_t cameraPosDataIndex = GETSEGOFFSET(cameraPosDataSeg);
-		uint32_t entrySize = numDataTotal * 0x6;
-		parent->AddDeclarationArray(cameraPosDataIndex, DeclarationAlignment::Align4, entrySize,
-		                            "Vec3s", StringHelper::Sprintf("%sCamPosData", prefix.c_str()),
-		                            numDataTotal, declaration);
-	}
-}
-
-CameraDataList::~CameraDataList()
-{
-	for (auto entry : entries)
-		delete entry;
-
-	for (auto camPosData : cameraPositionData)
-		delete camPosData;
-}
-
-CameraPositionData::CameraPositionData(const std::vector<uint8_t>& rawData, uint32_t rawDataIndex)
-{
-	x = BitConverter::ToInt16BE(rawData, rawDataIndex + 0);
-	y = BitConverter::ToInt16BE(rawData, rawDataIndex + 2);
-	z = BitConverter::ToInt16BE(rawData, rawDataIndex + 4);
 }
