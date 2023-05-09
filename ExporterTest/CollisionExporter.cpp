@@ -65,11 +65,11 @@ void ExporterExample_Collision::Save(ZResource* res, [[maybe_unused]] fs::path o
 	}
 	writer->Seek(col->camDataSegmentOffset, SeekOffsetType::Start);
 
-	for (auto entry : col->camData->entries)
+	for (const auto& entry : col->camData->dataList)
 	{
-		writer->Write(entry->cameraSType);
-		writer->Write(entry->numData);
-		writer->Write(entry->cameraPosDataSeg);
+		writer->Write(entry.cameraSType);
+		writer->Write(entry.numCameras);
+		writer->Write(entry.camDataListPtr);
 	}
 
 	writer->Seek(oldOffset, SeekOffsetType::Start);
